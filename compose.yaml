@@ -1,0 +1,20 @@
+name: gymos-enterprise
+services:
+  db:
+    image: postgres:17.11-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Run scripts/configure.py}
+      POSTGRES_USER: ${POSTGRES_USER:?Run scripts/configure.py}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run scripts/configure.py}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - gymos-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+volumes:
+  gymos-db:

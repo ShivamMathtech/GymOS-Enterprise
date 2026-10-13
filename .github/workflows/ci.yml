@@ -1,0 +1,54 @@
+name: GymOS checks
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_DB: gymos_test
+          POSTGRES_USER: gymos_test
+          POSTGRES_PASSWORD: isolated-test-only
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U gymos_test -d gymos_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      APP_ENV: test
+      TEST_DATABASE_URL: postgresql+psycopg://gymos_test:isolated-test-only@127.0.0.1:5433/gymos_test
+      DATABASE_URL: postgresql+psycopg://gymos_test:isolated-test-only@127.0.0.1:5433/gymos_test
+      GYMOS_TEST_CONFIRM: isolated
+      SECRET_KEY: ci-test-only-signing-key-not-a-production-secret-2026
+      AUTH_RATE_LIMIT: 10000
+      ALLOW_REGISTRATION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12', cache: pip, cache-dependency-path: backend/requirements-dev.txt}
+      - uses: actions/setup-node@v4
+        with: {node-version: '24', cache: npm, cache-dependency-path: frontend/package-lock.json}
+      - run: pip install -r requirements-dev.txt
+        working-directory: backend
+      - run: alembic upgrade head && alembic check && pytest && ruff check .
+        working-directory: backend
+      - run: npm ci && npm run lint && npm test && npm run build && npm audit --omit=dev
+        working-directory: frontend
+      - run: pip install pip-audit && pip-audit -r requirements.txt
+        working-directory: backend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - name: Start test applications
+        run: |
+          cd backend
+          uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log > /tmp/gymos-api.log 2>&1 &
+          cd ../frontend
+          npm run dev > /tmp/gymos-web.log 2>&1 &
+          python -c "import urllib.request,time; [time.sleep(1) for _ in range(5)]; urllib.request.urlopen('http://127.0.0.1:8000/health/ready'); urllib.request.urlopen('http://localhost:5173')"
+      - run: npm run test:e2e
+        working-directory: frontend
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-failures
+          path: frontend/test-results
